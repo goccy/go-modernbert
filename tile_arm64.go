@@ -47,6 +47,24 @@ func selectKernels(k Kernel) (*kernels, error) {
 	return ks, nil
 }
 
+// packInt8Blocks8 packs rows (a multiple of 8) of k int8 values (k a
+// multiple of 8) into blocks of eight rows: for each block and each step
+// of eight along k, 64 bytes holding row pairs (0,1), (2,3), (4,5), (6,7),
+// eight consecutive values of each row (the SMMLA operand layout).
+func packInt8Blocks8(q []int8, rows, k int, out []byte) {
+	steps := k / 8
+	for g := 0; g < rows/tileRows; g++ {
+		blk := out[g*tileRows*k : (g+1)*tileRows*k]
+		for r := 0; r < tileRows; r++ {
+			row := q[(g*tileRows+r)*k : (g*tileRows+r+1)*k]
+			rb := unsafe.Slice((*byte)(unsafe.Pointer(&row[0])), k)
+			for s := 0; s < steps; s++ {
+				copy(blk[s*64+r*8:s*64+r*8+8], rb[8*s:8*s+8])
+			}
+		}
+	}
+}
+
 func smmlaPackB(q []int8, rows, k, offset int, out []byte, corr []int32) {
 	packInt8Blocks8(q, rows, k, out)
 	clear(corr[:rows])

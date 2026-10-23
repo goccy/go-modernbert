@@ -9,7 +9,7 @@ import "math"
 // run at full rate.
 
 // quantizeRowsInt8 quantizes rows of width in to symmetric int8 with one
-// scale per row: q = round(x / s), s = max|x| / levels.|x| / 127. Branch-free on the
+// scale per row: q = round(x / s), s = max|x| / levels. Branch-free on the
 // data (sign-dependent branches mispredict on half of random activations):
 // |x| and the max are taken on the float bit patterns, and rounding adds
 // ±0.5 built from the sign bit before truncation.

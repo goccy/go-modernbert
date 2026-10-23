@@ -4,8 +4,6 @@ package modernbert
 
 import (
 	"fmt"
-	"math"
-	"unsafe"
 
 	"golang.org/x/sys/cpu"
 )
@@ -95,30 +93,6 @@ func packRows4(q []int8, rows, k, offset, cols int, out []byte, corr []int32) {
 				s += int32(v)
 			}
 			corr[cb*cols+c] = int32(offset) * s
-		}
-	}
-}
-
-// quantizeRowsU8 is the scalar form of quantizeRowsU8AVX2, for tests.
-func quantizeRowsU8(x *float32, k, stride int, out *byte, scales *float32, levels float32, offset int) {
-	xs := unsafe.Slice(x, (tileRows-1)*stride+k)
-	o := unsafe.Slice(out, tileRows*k)
-	sc := unsafe.Slice(scales, tileRows)
-	for r := 0; r < tileRows; r++ {
-		row := xs[r*stride : r*stride+k]
-		var amax float32
-		for _, v := range row {
-			amax = max(amax, float32(math.Abs(float64(v))))
-		}
-		s := amax / levels
-		inv := float32(0)
-		if s > 0 {
-			inv = 1 / s
-		}
-		sc[r] = s
-		q := o[r*k : (r+1)*k]
-		for i, v := range row {
-			q[i] = byte(int(math.Round(float64(v*inv))) + offset)
 		}
 	}
 }

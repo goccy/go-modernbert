@@ -2,6 +2,8 @@
 
 package modernbert
 
+import "unsafe"
+
 // dot2x4Int8AVX2 (kernel_amd64.s): out[i*4+j] is the int32 dot product of
 // x row i (i < 2) and w row j (j < 4) over k values, k a positive multiple
 // of 32.
@@ -22,7 +24,7 @@ func dotTile(k Kernel) tile {
 	switch k {
 	case KernelVNNI:
 		return tile{rows: 4, cols: 4, kAlign: 64, unsignedX: true, run: func(x, w *int8, k, xs, ws int, out *int32) {
-			dot4x4U8S8VNNI((*uint8)(unsafePointer(x)), w, k, xs, ws, out)
+			dot4x4U8S8VNNI((*uint8)(unsafe.Pointer(x)), w, k, xs, ws, out)
 		}}
 	case KernelAVX2:
 		return tile{rows: 2, cols: 4, kAlign: 32, run: dot2x4Int8AVX2}

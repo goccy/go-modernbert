@@ -3,10 +3,20 @@ name: ci
 on:
   push:
     branches: [main]
+    paths-ignore: ['**.md']
   pull_request:
+    paths-ignore: ['**.md']
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   test:
@@ -16,7 +26,7 @@ jobs:
         include:
           - os: ubuntu-latest
             arch: amd64
-          - os: macos-latest
+          - os: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
@@ -27,20 +37,14 @@ jobs:
           go-version-file: go.mod
       - name: CPU
         run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            grep -m1 'model name' /proc/cpuinfo
-            grep -m1 -o 'avx2\|avx512_vnni\|avx512bw\|avx512f' /proc/cpuinfo | sort -u | tr '\n' ' '; echo
-          else
-            sysctl -n machdep.cpu.brand_string
-            sysctl -a | grep -i 'FEAT_I8MM\|FEAT_DotProd' || true
-          fi
+          grep -m1 'model name' /proc/cpuinfo || grep -m1 'CPU part' /proc/cpuinfo || true
+          grep -m1 -o 'avx2\|avx512_vnni\|avx512bw\|avx512f\|i8mm\|asimddp' /proc/cpuinfo | sort -u | tr '\n' ' '; echo
       - run: go vet ./...
+      - run: go test -v -run TestEncodeSyntheticKernels ./... | grep kernel=
       - run: go test ./...
-      - name: Kernel the tests ran on
-        run: go test -run TestEncodeSyntheticKernels -v ./... | grep kernel=
       - name: Go fallback paths
         run: MODERNBERT_KERNEL=none go test ./...
-      - name: AVX2 kernels on an AVX-512 CPU
+      - name: AVX2 kernels where the CPU has AVX-512
         if: matrix.arch == 'amd64'
         run: MODERNBERT_KERNEL=avx2 go test ./...
       - name: Kernel benchmarks

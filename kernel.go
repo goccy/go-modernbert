@@ -1,7 +1,5 @@
 package modernbert
 
-import "unsafe"
-
 // tile is an architecture's int8 dot-product tile kernel: run fills
 // out[i*cols+j] with the dot product of x row i and w row j over k values
 // (k a multiple of kAlign). With unsignedX the kernel multiplies unsigned
@@ -14,5 +12,3 @@ type tile struct {
 	unsignedX  bool
 	run        func(x, w *int8, k, xStride, wStride int, out *int32)
 }
-
-func unsafePointer(p *int8) unsafe.Pointer { return unsafe.Pointer(p) }

@@ -72,8 +72,24 @@ const (
 	QuantInt8RowWeights
 )
 
+func (q Quant) String() string {
+	switch q {
+	case QuantDefault:
+		return "default"
+	case QuantInt8Row:
+		return "int8"
+	case QuantF32:
+		return "f32"
+	case QuantInt8RowWeights:
+		return "int8-weights"
+	}
+	return fmt.Sprintf("Quant(%d)", int(q))
+}
+
 // Options tune Load.
 type Options struct {
+	// Quant selects how the linear layers (and, with a tile, attention)
+	// compute; the zero value is QuantDefault.
 	Quant Quant
 	// Threads is how many goroutines a forward pass spreads its matrix
 	// products and attention over; 0 or 1 runs single-threaded, and more
@@ -145,6 +161,9 @@ func LoadWithOptions(path string, opts Options) (*Model, error) {
 		return nil, err
 	}
 	m := &Model{Config: c, Metadata: f.kv}
+	if toks, ok := f.kv["tokenizer.ggml.tokens"].([]string); ok && len(toks) != c.NVocab {
+		return nil, fmt.Errorf("modernbert: %d tokenizer tokens for a vocabulary of %d", len(toks), c.NVocab)
+	}
 	if m.TokEmbd, err = loadVector(f, "token_embd.weight", c.NEmbd, c.NVocab); err != nil {
 		return nil, err
 	}
@@ -195,6 +214,9 @@ func (m *Model) prepare(opts Options) error {
 	k, err := selectKernels(opts.Kernel)
 	if err != nil {
 		return err
+	}
+	if opts.Quant < QuantDefault || opts.Quant > QuantInt8RowWeights {
+		return fmt.Errorf("modernbert: unknown quantization %d", int(opts.Quant))
 	}
 	m.k = k
 	// More threads than the runtime can run at once only contend: the
@@ -302,14 +324,6 @@ func loadLinear(f *ggufFile, name string, in, out int) (Linear, error) {
 		return Linear{}, err
 	}
 	return Linear{Out: out, In: in, W: w}, nil
-}
-
-// ropeBase returns the RoPE theta of layer il.
-func (m *Model) ropeBase(il int) float32 {
-	if m.IsGlobal(il) {
-		return m.RopeBase
-	}
-	return m.RopeBaseSW
 }
 
 // invFreq returns the per-pair inverse frequencies of RoPE for base theta.

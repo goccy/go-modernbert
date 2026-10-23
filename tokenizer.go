@@ -78,20 +78,32 @@ func newTokenizer(kv map[string]any) (*Tokenizer, error) {
 			}
 		}
 	}
-	if id, ok := kv["tokenizer.ggml.unknown_token_id"].(uint32); ok {
-		t.unk = int32(id)
+	// Special ids from the config, each checked against the vocabulary.
+	special := func(key string, dst *int32) error {
+		id, ok := kv[key].(uint32)
+		if !ok {
+			return nil
+		}
+		if id >= uint32(len(pieces)) {
+			return fmt.Errorf("modernbert: %s = %d outside the vocabulary (%d)", key, id, len(pieces))
+		}
+		*dst = int32(id)
+		return nil
+	}
+	if err := special("tokenizer.ggml.unknown_token_id", &t.unk); err != nil {
+		return nil, err
 	}
 	if t.unk < 0 {
 		return nil, fmt.Errorf("modernbert: tokenizer has no unknown token")
 	}
 	if add, _ := kv["tokenizer.ggml.add_bos_token"].(bool); add {
-		if id, ok := kv["tokenizer.ggml.bos_token_id"].(uint32); ok {
-			t.bos = int32(id)
+		if err := special("tokenizer.ggml.bos_token_id", &t.bos); err != nil {
+			return nil, err
 		}
 	}
 	if add, _ := kv["tokenizer.ggml.add_eos_token"].(bool); add {
-		if id, ok := kv["tokenizer.ggml.eos_token_id"].(uint32); ok {
-			t.eos = int32(id)
+		if err := special("tokenizer.ggml.eos_token_id", &t.eos); err != nil {
+			return nil, err
 		}
 	}
 	return t, nil

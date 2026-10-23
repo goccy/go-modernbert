@@ -1,0 +1,42 @@
+name: compare
+
+# go-modernbert against go-llama on one synthetic 130m-shaped GGUF, on
+# the runner's CPU. Manual, since it builds the go-llama engine.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      GOAMD64: v2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: benchmarks/go.mod
+          cache-dependency-path: benchmarks/go.sum
+      - name: CPU
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            grep -m1 'model name' /proc/cpuinfo; nproc
+          else
+            sysctl -n machdep.cpu.brand_string hw.ncpu
+          fi
+      - name: Build
+        working-directory: benchmarks
+        run: go build -o "$RUNNER_TEMP/bench" .
+      - name: Synthetic model
+        run: "$RUNNER_TEMP/bench" -gen "$RUNNER_TEMP/synth.gguf"
+      - name: 1 thread
+        run: "$RUNNER_TEMP/bench" -gguf "$RUNNER_TEMP/synth.gguf" -threads 1 -reps 3 2>&1 | grep -E '^(go-|[a-z]+/)'
+      - name: All cores
+        run: "$RUNNER_TEMP/bench" -gguf "$RUNNER_TEMP/synth.gguf" -threads "$(nproc 2>/dev/null || sysctl -n hw.ncpu)" -reps 3 2>&1 | grep -E '^(go-|[a-z]+/)'

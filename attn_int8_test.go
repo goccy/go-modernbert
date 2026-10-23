@@ -11,10 +11,11 @@ import (
 // random projections, global and sliding-window, with a sequence that is
 // not a multiple of the block.
 func TestAttentionInt8(t *testing.T) {
-	if !hasInt8Tiles {
-		t.Skip("no int8 tile kernels")
+	ks := testKernels(t)
+	if ks.tile == nil {
+		t.Skip("no int8 tile")
 	}
-	m := &Model{Config: Config{NEmbd: 128, NHead: 2, NFF: 256, NLayer: 3, RopeBase: 10000, RopeBaseSW: 10000, Window: 128, Pattern: 3}, threads: 3}
+	m := &Model{Config: Config{NEmbd: 128, NHead: 2, NFF: 256, NLayer: 3, RopeBase: 10000, RopeBaseSW: 10000, Window: 128, Pattern: 3}, threads: 3, k: ks}
 	m.int8Attention = true
 	for _, T := range []int{203, 64} {
 		for il := 0; il < 2; il++ {

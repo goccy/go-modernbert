@@ -41,7 +41,10 @@ type attnScratch struct {
 func (m *Model) newWorkspace(T int) *workspace {
 	D, F := m.NEmbd, m.NFF
 	kMax := max(D, F)
-	Tp := roundUp(T, max(tileRows, tileAlign))
+	Tp := roundUp(T, tileRows)
+	if m.k.tile != nil {
+		Tp = roundUp(T, max(tileRows, m.k.tile.align))
+	}
 	ws := &workspace{
 		cap:  T,
 		pool: newPool(m.threads),
@@ -62,7 +65,7 @@ func (m *Model) newWorkspace(T int) *workspace {
 				scores: make([]float32, tileRows*Tp),
 				probs:  make([]uint8, tileRows*Tp),
 				otile:  make([]float32, tileRows*hd),
-				tmp:    make([]int8, tileCols*max(hd, Tp)),
+				tmp:    make([]int8, m.k.tile.cols*max(hd, Tp)),
 			}
 		}
 	}
@@ -167,11 +170,7 @@ func (m *Model) Encode(tokens []int32) ([]float32, error) {
 		parallelFor(ws.pool, T, 1, func(tlo, thi int) {
 			add(h[tlo*D:thi*D], ws.o[tlo*D:thi*D])
 			copy(x[tlo*D:thi*D], h[tlo*D:thi*D])
-			if layerNormRowsFast != nil && D%8 == 0 {
-				layerNormRowsFast(&x[tlo*D], thi-tlo, D, &l.FFNNorm[0], m.NormEps)
-				return
-			}
-			layerNormRows(x[tlo*D:thi*D], thi-tlo, D, l.FFNNorm, m.NormEps)
+			m.k.layerNormRows(x[tlo*D:thi*D], thi-tlo, D, l.FFNNorm, m.NormEps)
 		})
 		m.matmul(x, T, l.Up, ws, ws.up) // [T*2*NFF]
 		parallelFor(ws.pool, T, 1, func(tlo, thi int) {
@@ -179,16 +178,7 @@ func (m *Model) Encode(tokens []int32) ([]float32, error) {
 				row := ws.up[t*2*m.NFF : (t+1)*2*m.NFF]
 				a := ws.act[t*m.NFF : (t+1)*m.NFF]
 				gate := row[m.NFF:]
-				n := 0
-				if gegluErfFast != nil {
-					n = m.NFF &^ (gegluErfAlign - 1)
-					if n > 0 {
-						gegluErfFast(&a[0], &row[0], &gate[0], n)
-					}
-				}
-				for j := n; j < m.NFF; j++ {
-					a[j] = geluErf(row[j]) * gate[j]
-				}
+				m.k.geglu(a, row, gate, m.NFF)
 			}
 		})
 		m.matmul(ws.act, T, l.Down, ws, ws.down)
@@ -206,22 +196,18 @@ func (m *Model) Encode(tokens []int32) ([]float32, error) {
 func (m *Model) layerNorm(x []float32, T int, w []float32, ws *workspace) {
 	D := m.NEmbd
 	parallelFor(ws.pool, T, 1, func(tlo, thi int) {
-		if layerNormRowsFast != nil && D%8 == 0 {
-			layerNormRowsFast(&x[tlo*D], thi-tlo, D, &w[0], m.NormEps)
-			return
-		}
-		layerNormRows(x[tlo*D:thi*D], thi-tlo, D, w, m.NormEps)
+		m.k.layerNormRows(x[tlo*D:thi*D], thi-tlo, D, w, m.NormEps)
 	})
 }
 
 // matmul computes x (T rows of l.In) times l into out (T rows of l.Out).
 func (m *Model) matmul(x []float32, T int, l Linear, ws *workspace, out []float32) {
 	if l.Packed != nil {
-		matmulTile(x, T, l, ws, out)
+		m.matmulTile(x, T, l, ws, out)
 		return
 	}
 	if l.W8 != nil {
-		matmulInt8(x, T, l, ws, out)
+		m.matmulInt8(x, T, l, ws, out)
 		return
 	}
 	parallelFor(ws.pool, l.Out, 1, func(nlo, nhi int) {
@@ -325,7 +311,7 @@ func (m *Model) attention(q, k, v []float32, T, il int, out []float32, ws *works
 				}
 				var sum float32
 				if rhi > rlo {
-					sum = softmaxExpRow(row[rlo:rhi], maxS)
+					sum = m.k.softmaxExpRow(row[rlo:rhi], maxS)
 				}
 				inv := 1 / sum
 				for c := 0; c < rlo; c++ {

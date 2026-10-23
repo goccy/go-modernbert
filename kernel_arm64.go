@@ -11,10 +11,10 @@ import "golang.org/x/sys/cpu"
 //go:noescape
 func dot4x4Int8(x, w *int8, k, xStride, wStride int, out *int32)
 
-// tileKernel describes the int8 tile the CPU runs: SDOT 4×4 when the
-// dotprod feature is present, else none.
-func tileKernel() tile {
-	if cpu.ARM64.HasASIMDDP {
+// dotTile is the dot-product tile of kernel k: SDOT 4×4 when the dotprod
+// feature is present (and k is not KernelNone), else none.
+func dotTile(k Kernel) tile {
+	if k != KernelNone && cpu.ARM64.HasASIMDDP {
 		return tile{rows: 4, cols: 4, kAlign: 16, run: dot4x4Int8}
 	}
 	return tile{}

@@ -10,7 +10,7 @@ import (
 // shapes with and without tile remainders, including values at the int8
 // extremes.
 func TestGemmInt8MatchesScalar(t *testing.T) {
-	t.Parallel()
+	kernel := testKernels(t).dot
 	t.Logf("tile kernel: %dx%d kAlign %d unsignedX %v", kernel.rows, kernel.cols, kernel.kAlign, kernel.unsignedX)
 	rng := rand.New(rand.NewSource(1))
 	for _, shape := range []struct{ T, N, K int }{{4, 4, 16}, {8, 8, 512}, {5, 7, 32}, {1, 3, 2048}, {9, 13, 48}, {3, 4, 20}, {4, 4, 64}, {6, 9, 128}, {2, 4, 32}, {8, 12, 192}} {
@@ -40,7 +40,7 @@ func TestGemmInt8MatchesScalar(t *testing.T) {
 		got := make([]float32, shape.T*shape.N)
 		ws := &workspace{xu: make([]int8, len(x)), pool: newPool(3)}
 		t.Cleanup(ws.pool.close)
-		gemmInt8(x, shape.T, shape.K, w, rowSums(w, shape.N, shape.K), shape.N, ws, ones(shape.T), ones(shape.N), got)
+		gemmInt8(kernel, x, shape.T, shape.K, w, rowSums(w, shape.N, shape.K), shape.N, ws, ones(shape.T), ones(shape.N), got)
 		for ti := 0; ti < shape.T; ti++ {
 			for n := 0; n < shape.N; n++ {
 				want := float32(dotInt8(x[ti*shape.K:(ti+1)*shape.K], w[n*shape.K:(n+1)*shape.K]))
@@ -69,8 +69,9 @@ func BenchmarkGemmInt8(b *testing.B) {
 	ws := &workspace{xu: make([]int8, len(x)), pool: newPool(3)}
 	b.Cleanup(ws.pool.close)
 	b.ResetTimer()
+	kn := testKernels(b).dot
 	for i := 0; i < b.N; i++ {
-		gemmInt8(x, T, K, w, rs, N, ws, xs, wscale, out)
+		gemmInt8(kn, x, T, K, w, rs, N, ws, xs, wscale, out)
 	}
 	b.ReportMetric(float64(T*N*K)*float64(b.N)/b.Elapsed().Seconds()/1e9, "GMAC/s")
 }

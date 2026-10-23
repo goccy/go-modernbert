@@ -2,9 +2,7 @@
 
 package modernbert
 
-// hasVecNeon reports whether the NEON row kernels (vec_arm64.s) run here;
-// they need only the base SIMD.
-const hasVecNeon = true
+// The NEON row kernels (vec_arm64.s); they need only the base SIMD.
 
 // quantizePack8 quantizes eight rows of k float32 (k a multiple of 8,
 // rows stride floats apart) to ±levels with one scale per row, written
@@ -29,8 +27,3 @@ func maxF32x4(x *float32, n int) float32
 //
 //go:noescape
 func layerNormRowsNeon(x *float32, T, D int, w *float32, eps float32)
-
-func init() {
-	layerNormRowsFast = layerNormRowsNeon
-	maxF32Fast, maxF32Align = maxF32x4, 4
-}

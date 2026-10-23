@@ -3,6 +3,8 @@
 package modernbert
 
 import (
+	"golang.org/x/sys/cpu"
+
 	"fmt"
 	"math"
 	"math/rand"
@@ -11,7 +13,7 @@ import (
 )
 
 func TestGemmSmmla8(t *testing.T) {
-	if !hasInt8Tiles {
+	if !cpu.ARM64.HasI8MM {
 		t.Skip("no i8mm")
 	}
 	for _, tc := range []struct{ k, ncb int }{{8, 1}, {64, 1}, {512, 3}, {2048, 5}} {
@@ -85,7 +87,7 @@ func TestGemmSmmla8(t *testing.T) {
 // BenchmarkGemmSmmla8 times the tile on model shapes (512 rows) to read
 // its MAC rate: weights resident in L1 (N=64) and streamed (N=4096).
 func BenchmarkGemmSmmla8(b *testing.B) {
-	if !hasInt8Tiles {
+	if !cpu.ARM64.HasI8MM {
 		b.Skip("no i8mm")
 	}
 	for _, shape := range []struct{ K, N, aOff int }{{512, 64, 0}, {512, 64, 64}, {512, 512, 0}, {512, 512, 64}, {512, 4096, 0}, {512, 4096, 64}, {2048, 512, 0}, {2048, 512, 64}} {

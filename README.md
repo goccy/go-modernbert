@@ -40,13 +40,12 @@ attention in float32. The only dependency is `golang.org/x/sys` for CPU
 feature detection.
 
 `Options.Quant` selects the path explicitly (`QuantInt8Row`, the default;
-`QuantF32` for a scalar float32 reference). `Options.Threads` is the
-number of goroutines a forward pass spreads over; workspaces and worker
-pools are reused across calls.
-
-`MODERNBERT_KERNEL=vnni|avx2|none` overrides the amd64 tile choice, for
-comparing kernels on one machine or running one the CPU does not
-advertise (AVX2 under Rosetta, say).
+`QuantF32` for a scalar float32 reference). `Options.Kernel` selects the
+kernels (`KernelAuto` picks the best the CPU advertises; `KernelNone`,
+`KernelSMMLA`, `KernelAVX2`, `KernelVNNI` name one, which then runs
+whether or not the CPU advertises it). `Options.Threads` is the number of
+goroutines a forward pass spreads over; workspaces and worker pools are
+reused across calls.
 
 ## Testing
 
@@ -57,7 +56,13 @@ MODERNBERT_GGUF=model.gguf go test -run NONE -bench BenchmarkEncode ./...
 MODERNBERT_KERNEL=avx2 GOARCH=amd64 go test ./...         # the AVX2 path under Rosetta
 ```
 
-`MODERNBERT_THREADS` and `MODERNBERT_QUANT` (`f32`, `int8`, `w8`)
-select the thread count and path of the parity test and benchmark;
-`MODERNBERT_COS_MIN` relaxes the parity cosine threshold for the int8
-paths.
+`MODERNBERT_THREADS`, `MODERNBERT_QUANT` (`f32`, `int8`, `w8`) and
+`MODERNBERT_KERNEL` (`none`, `smmla`, `avx2`, `vnni`) select the thread
+count, path and kernels of the tests and benchmarks; `MODERNBERT_COS_MIN`
+relaxes the parity cosine threshold for the int8 paths. The environment
+is read by the tests only. `BenchmarkEncodeSynthetic` times a
+130m-shaped model with random weights and needs no file.
+
+`benchmarks/` (a separate module) writes such a model to a GGUF and
+times go-modernbert and go-llama on it; the `compare` workflow runs it
+on the CI runners.

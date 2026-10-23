@@ -6,12 +6,13 @@ import (
 	"testing"
 )
 
-func TestSoftmaxExpFast(t *testing.T) {
-	if softmaxExpFast == nil {
+func TestVecSoftmaxExp(t *testing.T) {
+	ks := testKernels(t)
+	if ks.vecSoftmaxExp == nil {
 		t.Skip("no vector softmax")
 	}
 	rng := rand.New(rand.NewSource(7))
-	n := 6 * softmaxExpAlign
+	n := 6 * ks.softmaxAlign
 	x := make([]float32, n)
 	for i := range x {
 		x[i] = float32(rng.NormFloat64()) * 20
@@ -25,7 +26,7 @@ func TestSoftmaxExpFast(t *testing.T) {
 		wantSum += float64(want[i])
 	}
 	got := append([]float32(nil), x...)
-	sum := softmaxExpFast(&got[0], n, maxS)
+	sum := ks.vecSoftmaxExp(&got[0], n, maxS)
 	for i := range want {
 		if math.Abs(float64(got[i]-want[i])) > 2e-6*float64(want[i])+1e-30 {
 			t.Fatalf("exp[%d] = %v, want %v", i, got[i], want[i])
@@ -36,12 +37,13 @@ func TestSoftmaxExpFast(t *testing.T) {
 	}
 }
 
-func TestGegluErfFast(t *testing.T) {
-	if gegluErfFast == nil {
+func TestVecGeglu(t *testing.T) {
+	ks := testKernels(t)
+	if ks.vecGeglu == nil {
 		t.Skip("no vector GeGLU")
 	}
 	rng := rand.New(rand.NewSource(8))
-	n := 5 * gegluErfAlign
+	n := 5 * ks.gegluAlign
 	x := make([]float32, n)
 	g := make([]float32, n)
 	for i := range x {
@@ -50,7 +52,7 @@ func TestGegluErfFast(t *testing.T) {
 	}
 	x[0], x[1], x[2] = 0, -12, 12
 	got := make([]float32, n)
-	gegluErfFast(&got[0], &x[0], &g[0], n)
+	ks.vecGeglu(&got[0], &x[0], &g[0], n)
 	for i := range got {
 		xf := float64(x[i])
 		want := 0.5 * xf * (1 + math.Erf(xf/math.Sqrt2)) * float64(g[i])

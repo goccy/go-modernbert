@@ -56,7 +56,7 @@ func quantizeLinear(l *Linear) {
 // matmulInt8 is x (T rows of l.In, float32) times l on the int8 path:
 // activations quantized per row into ws, int32 dot per (row, output),
 // scaled back into out (T rows of l.Out).
-func matmulInt8(x []float32, T int, l Linear, ws *workspace, out []float32) {
+func (m *Model) matmulInt8(x []float32, T int, l Linear, ws *workspace, out []float32) {
 	if l.ActF32 {
 		parallelFor(ws.pool, l.Out, 1, func(nlo, nhi int) {
 			for t := 0; t < T; t++ {
@@ -78,16 +78,16 @@ func matmulInt8(x []float32, T int, l Linear, ws *workspace, out []float32) {
 	parallelFor(ws.pool, T, 1, func(tlo, thi int) {
 		quantizeRowsInt8(x[tlo*l.In:thi*l.In], thi-tlo, l.In, xq[tlo*l.In:thi*l.In], xs[tlo:thi], 127)
 	})
-	gemmInt8(xq, T, l.In, l.W8, l.RowSum, l.Out, ws, xs, l.Scale, out)
+	gemmInt8(m.k.dot, xq, T, l.In, l.W8, l.RowSum, l.Out, ws, xs, l.Scale, out)
 }
 
 // gemmInt8 computes out[t*N+n] = xs[t] * ws[n] * Σ_c x[t*k+c] * w[n*k+c]
 // for every (row t of x, row n of w), the output rows split across
-// threads. The CPU's tile kernel covers the bulk when k is a multiple of
-// its alignment; the edges and the fallback run the scalar dot. rowSum (Σw
-// per weight row) is needed only by kernels that take unsigned activations.
-func gemmInt8(x []int8, T, k int, w []int8, rowSum []int32, N int, wsp *workspace, xs, ws []float32, out []float32) {
-	kn := kernel
+// threads. The dot-product tile kn covers the bulk when k is a multiple
+// of its alignment; the edges and the fallback run the scalar dot. rowSum
+// (Σw per weight row) is needed only by kernels that take unsigned
+// activations.
+func gemmInt8(kn tile, x []int8, T, k int, w []int8, rowSum []int32, N int, wsp *workspace, xs, ws []float32, out []float32) {
 	useTile := kn.rows > 0 && k > 0 && k%kn.kAlign == 0
 	xk := x
 	if useTile && kn.unsignedX {

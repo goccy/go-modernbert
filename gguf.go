@@ -4,12 +4,17 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"math/bits"
 	"os"
 )
 
 // A minimal GGUF reader: the metadata (key/value) section, the tensor infos
 // and the tensor data of the types this package consumes (F32, F16, Q8_0).
 // Format: https://github.com/ggml-org/ggml/blob/master/docs/gguf.md
+//
+// The file is untrusted input: every count and size read from it is
+// checked against the file length before it sizes an allocation or a
+// slice, and nested arrays are limited in depth.
 
 const ggufMagic = "GGUF"
 
@@ -42,6 +47,9 @@ const (
 const q8_0BlockSize = 32
 const q8_0BlockBytes = 2 + q8_0BlockSize
 
+// maxArrayDepth is how deeply metadata arrays may nest.
+const maxArrayDepth = 2
+
 type ggufTensor struct {
 	name   string
 	typ    uint32
@@ -62,9 +70,18 @@ func readGGUF(path string) (*ggufFile, error) {
 	if err != nil {
 		return nil, err
 	}
+	f, err := parseGGUF(data)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return f, nil
+}
+
+// parseGGUF parses a GGUF image held in memory.
+func parseGGUF(data []byte) (*ggufFile, error) {
 	r := &ggufReader{b: data}
 	if string(r.take(4)) != ggufMagic {
-		return nil, fmt.Errorf("gguf: %s is not a GGUF file", path)
+		return nil, fmt.Errorf("gguf: not a GGUF file")
 	}
 	version := r.u32()
 	if version != 2 && version != 3 {
@@ -75,11 +92,19 @@ func readGGUF(path string) (*ggufFile, error) {
 	if r.err != nil {
 		return nil, r.err
 	}
-	f := &ggufFile{data: data, kv: make(map[string]any, nKV), tensors: make(map[string]*ggufTensor, nTensors)}
+	// Every key/value takes at least 12 bytes and every tensor info at
+	// least 24, so larger counts cannot fit in the file.
+	if nKV > uint64(len(data))/12 || nTensors > uint64(len(data))/24 {
+		return nil, fmt.Errorf("gguf: %d metadata entries and %d tensors cannot fit in %d bytes", nKV, nTensors, len(data))
+	}
+	f := &ggufFile{data: data, kv: make(map[string]any), tensors: make(map[string]*ggufTensor)}
 	for i := uint64(0); i < nKV && r.err == nil; i++ {
 		key := r.str()
 		typ := ggufType(r.u32())
-		f.kv[key] = r.value(typ)
+		f.kv[key] = r.value(typ, 0)
+	}
+	if r.err != nil {
+		return nil, r.err
 	}
 	alignment := uint64(32)
 	if a, ok := f.kv["general.alignment"].(uint32); ok && a != 0 {
@@ -88,14 +113,27 @@ func readGGUF(path string) (*ggufFile, error) {
 	for i := uint64(0); i < nTensors && r.err == nil; i++ {
 		t := &ggufTensor{name: r.str()}
 		nd := r.u32()
-		if nd > 4 {
+		if r.err != nil {
+			break
+		}
+		if nd == 0 || nd > 4 {
 			return nil, fmt.Errorf("gguf: tensor %s has %d dims", t.name, nd)
 		}
 		for d := uint32(0); d < nd; d++ {
-			t.shape = append(t.shape, r.u64())
+			dim := r.u64()
+			if dim == 0 || dim > uint64(len(data)) {
+				return nil, fmt.Errorf("gguf: tensor %s has dim %d", t.name, dim)
+			}
+			t.shape = append(t.shape, dim)
 		}
 		t.typ = r.u32()
 		t.offset = r.u64()
+		if t.offset > uint64(len(data)) {
+			return nil, fmt.Errorf("gguf: tensor %s has offset %d past the end of the file", t.name, t.offset)
+		}
+		if _, dup := f.tensors[t.name]; dup {
+			return nil, fmt.Errorf("gguf: tensor %s appears twice", t.name)
+		}
 		f.tensors[t.name] = t
 	}
 	if r.err != nil {
@@ -113,7 +151,11 @@ func (f *ggufFile) tensor(name string) (*ggufTensor, []byte, error) {
 	}
 	n := uint64(1)
 	for _, d := range t.shape {
-		n *= d
+		var hi uint64
+		hi, n = bits.Mul64(n, d)
+		if hi != 0 || n > uint64(len(f.data)) {
+			return nil, nil, fmt.Errorf("gguf: tensor %s has %v elements, more than the file holds", name, t.shape)
+		}
 	}
 	var size uint64
 	switch t.typ {
@@ -129,11 +171,12 @@ func (f *ggufFile) tensor(name string) (*ggufTensor, []byte, error) {
 	default:
 		return nil, nil, fmt.Errorf("gguf: tensor %s has unsupported type %d", name, t.typ)
 	}
-	start := f.dataStart + t.offset
-	if start+size > uint64(len(f.data)) {
+	start, carry := bits.Add64(f.dataStart, t.offset, 0)
+	end, carry2 := bits.Add64(start, size, carry)
+	if carry2 != 0 || end > uint64(len(f.data)) {
 		return nil, nil, fmt.Errorf("gguf: tensor %s runs past the end of the file", name)
 	}
-	return t, f.data[start : start+size], nil
+	return t, f.data[start:end], nil
 }
 
 // f32 returns the named tensor as float32 values (row-major, ne[0] fastest),
@@ -226,11 +269,14 @@ type ggufReader struct {
 	err error
 }
 
+// remaining is how many bytes are left to read.
+func (r *ggufReader) remaining() uint64 { return uint64(len(r.b) - r.pos) }
+
 func (r *ggufReader) take(n int) []byte {
 	if r.err != nil {
 		return nil
 	}
-	if r.pos+n > len(r.b) {
+	if n < 0 || r.pos+n > len(r.b) {
 		r.err = fmt.Errorf("gguf: truncated at offset %d", r.pos)
 		return nil
 	}
@@ -257,14 +303,19 @@ func (r *ggufReader) u64() uint64 {
 
 func (r *ggufReader) str() string {
 	n := r.u64()
-	if n > 1<<24 {
-		r.err = fmt.Errorf("gguf: string length %d too large", n)
+	if r.err != nil {
+		return ""
+	}
+	if n > r.remaining() {
+		r.err = fmt.Errorf("gguf: string of %d bytes at offset %d runs past the end of the file", n, r.pos)
 		return ""
 	}
 	return string(r.take(int(n)))
 }
 
-func (r *ggufReader) value(typ ggufType) any {
+// value decodes one metadata value of type typ; depth counts the arrays
+// enclosing it.
+func (r *ggufReader) value(typ ggufType, depth int) any {
 	switch typ {
 	case ggufUint8:
 		b := r.take(1)
@@ -311,10 +362,18 @@ func (r *ggufReader) value(typ ggufType) any {
 	case ggufFloat64:
 		return math.Float64frombits(r.u64())
 	case ggufArray:
+		if depth >= maxArrayDepth {
+			r.err = fmt.Errorf("gguf: arrays nested deeper than %d at offset %d", maxArrayDepth, r.pos)
+			return nil
+		}
 		et := ggufType(r.u32())
 		n := r.u64()
-		if n > 1<<26 {
-			r.err = fmt.Errorf("gguf: array length %d too large", n)
+		if r.err != nil {
+			return nil
+		}
+		// Every element takes at least one byte.
+		if n > r.remaining() {
+			r.err = fmt.Errorf("gguf: array of %d elements at offset %d runs past the end of the file", n, r.pos)
 			return nil
 		}
 		switch et {
@@ -343,10 +402,10 @@ func (r *ggufReader) value(typ ggufType) any {
 			}
 			return out
 		default:
-			// Other element types are skipped value by value.
+			// Other element types are decoded value by value.
 			out := make([]any, 0, min(n, 1<<16))
 			for i := uint64(0); i < n && r.err == nil; i++ {
-				out = append(out, r.value(et))
+				out = append(out, r.value(et, depth+1))
 			}
 			return out
 		}

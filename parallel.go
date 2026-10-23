@@ -115,6 +115,11 @@ func (p *pool) run(fn func(worker int)) {
 			runtime.Gosched()
 		}
 	}
+	// The parked workers keep the pool reachable; the pool must not keep
+	// the last job (and whatever it captured) reachable in turn.
+	p.mu.Lock()
+	p.fn = nil
+	p.mu.Unlock()
 }
 
 func (p *pool) close() {

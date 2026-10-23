@@ -265,6 +265,16 @@ func readConfig(f *ggufFile, c *Config) error {
 		}
 		c.Pattern = int(p)
 	}
+	for name, v := range map[string]int{"hidden size": c.NEmbd, "head count": c.NHead, "feed-forward width": c.NFF, "vocabulary": c.NVocab} {
+		if v <= 0 {
+			return fmt.Errorf("modernbert: %s is %d", name, v)
+		}
+	}
+	// Each layer has at least four tensors; more layers than that cannot
+	// be in the file.
+	if c.NLayer < 0 || c.NLayer > len(f.tensors)/4 {
+		return fmt.Errorf("modernbert: %d layers declared but the file holds %d tensors", c.NLayer, len(f.tensors))
+	}
 	if c.NEmbd%c.NHead != 0 {
 		return fmt.Errorf("modernbert: hidden size %d is not a multiple of %d heads", c.NEmbd, c.NHead)
 	}

@@ -185,6 +185,10 @@ func LoadWithOptions(path string, opts Options) (*Model, error) {
 	return m, nil
 }
 
+// Kernel reports the kernel set the model runs on (the resolved choice
+// when Options.Kernel was KernelAuto).
+func (m *Model) Kernel() Kernel { return m.k.kernel }
+
 // prepare selects the kernels and quantizes the float32 weights of m for
 // opts.
 func (m *Model) prepare(opts Options) error {

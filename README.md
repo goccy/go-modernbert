@@ -62,3 +62,7 @@ count, path and kernels of the tests and benchmarks; `MODERNBERT_COS_MIN`
 relaxes the parity cosine threshold for the int8 paths. The environment
 is read by the tests only. `BenchmarkEncodeSynthetic` times a
 130m-shaped model with random weights and needs no file.
+
+`benchmarks/` (a separate module) writes such a model to a GGUF and
+times go-modernbert and go-llama on it; the `compare` workflow runs it
+on the CI runners.

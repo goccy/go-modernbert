@@ -68,6 +68,7 @@ func benchModernbert(path string, threads, reps int) {
 	if err != nil {
 		log.Fatal(err)
 	}
+	fmt.Printf("go-modernbert kernel=%s\n", m.Kernel())
 	for _, n := range []int{32, 128, 512} {
 		toks := tokens(n)
 		for i := 0; i < 2; i++ {

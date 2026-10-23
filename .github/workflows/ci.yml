@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: amd64
+          - os: macos-latest
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: CPU
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            grep -m1 'model name' /proc/cpuinfo
+            grep -m1 -o 'avx2\|avx512_vnni\|avx512bw\|avx512f' /proc/cpuinfo | sort -u | tr '\n' ' '; echo
+          else
+            sysctl -n machdep.cpu.brand_string
+            sysctl -a | grep -i 'FEAT_I8MM\|FEAT_DotProd' || true
+          fi
+      - run: go vet ./...
+      - run: go test ./...
+      - name: Go fallback paths
+        run: MODERNBERT_KERNEL=none go test ./...
+      - name: AVX2 kernels on an AVX-512 CPU
+        if: matrix.arch == 'amd64'
+        run: MODERNBERT_KERNEL=avx2 go test ./...
+      - name: Kernel benchmarks
+        run: go test -run NONE -bench 'BenchmarkEncodeSynthetic|BenchmarkGemm' -benchtime 2x ./...
+      - name: Kernel benchmarks, 4 threads
+        run: MODERNBERT_THREADS=4 go test -run NONE -bench 'BenchmarkEncodeSynthetic' -benchtime 2x ./...

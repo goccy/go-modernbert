@@ -2,4 +2,4 @@
 
 package modernbert
 
-func tileKernel() tile { return tile{} }
+func dotTile(Kernel) tile { return tile{} }

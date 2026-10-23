@@ -77,6 +77,10 @@ type Options struct {
 	// Threads is how many goroutines a forward pass spreads its matrix
 	// products and attention over; 0 or 1 runs single-threaded.
 	Threads int
+	// Kernel selects the SIMD kernels; KernelAuto picks the best the CPU
+	// advertises. A kernel named explicitly runs whether or not the CPU
+	// advertises it.
+	Kernel Kernel
 }
 
 // Layer holds one encoder block's weights. AttnNorm is nil on layer 0 (the
@@ -102,8 +106,10 @@ type Model struct {
 	Metadata map[string]any
 
 	threads int
-	// int8Attention runs attention on the int8 tiles (QuantInt8Row with
-	// the tile kernels present).
+	// k is the kernel set the model runs on.
+	k *kernels
+	// int8Attention runs attention on the int8 tile (QuantInt8Row with a
+	// tile present).
 	int8Attention bool
 	// wsFree keeps forward-pass workspaces (buffers and worker pools) for
 	// reuse across calls.
@@ -136,11 +142,7 @@ func LoadWithOptions(path string, opts Options) (*Model, error) {
 	if err := readConfig(f, &c); err != nil {
 		return nil, err
 	}
-	m := &Model{Config: c, Metadata: f.kv, threads: max(opts.Threads, 1)}
-	if opts.Quant == QuantDefault {
-		opts.Quant = QuantInt8Row
-	}
-	m.int8Attention = opts.Quant == QuantInt8Row && hasInt8Tiles && c.HeadDim()%tileCols == 0 && c.HeadDim()%tileRows == 0
+	m := &Model{Config: c, Metadata: f.kv}
 	if m.TokEmbd, err = loadVector(f, "token_embd.weight", c.NEmbd, c.NVocab); err != nil {
 		return nil, err
 	}
@@ -174,20 +176,44 @@ func LoadWithOptions(path string, opts Options) (*Model, error) {
 		if l.Down, err = loadLinear(f, pfx+"ffn_down.weight", c.NFF, c.NEmbd); err != nil {
 			return nil, err
 		}
-		if opts.Quant == QuantInt8Row || opts.Quant == QuantInt8RowWeights {
-			for _, lin := range []*Linear{&l.QKV, &l.Out, &l.Up, &l.Down} {
-				quantizeLinear(lin)
-				lin.W = nil
-				lin.ActF32 = opts.Quant == QuantInt8RowWeights
-				if opts.Quant == QuantInt8Row && hasInt8Tiles && lin.In%8 == 0 && lin.Out%tileCols == 0 {
-					lin.Packed = make([]byte, lin.Out*lin.In)
-					lin.Corr = make([]int32, lin.Out)
-					packTileB(lin.W8, lin.Out, lin.In, actOffset, lin.Packed, lin.Corr)
-				}
+	}
+	if err := m.prepare(opts); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// prepare selects the kernels and quantizes the float32 weights of m for
+// opts.
+func (m *Model) prepare(opts Options) error {
+	k, err := selectKernels(opts.Kernel)
+	if err != nil {
+		return err
+	}
+	m.k = k
+	m.threads = max(opts.Threads, 1)
+	if opts.Quant == QuantDefault {
+		opts.Quant = QuantInt8Row
+	}
+	hd := m.HeadDim()
+	m.int8Attention = opts.Quant == QuantInt8Row && k.tile != nil && hd%k.tile.cols == 0 && hd%tileRows == 0
+	if opts.Quant != QuantInt8Row && opts.Quant != QuantInt8RowWeights {
+		return nil
+	}
+	for il := range m.Layers {
+		l := &m.Layers[il]
+		for _, lin := range []*Linear{&l.QKV, &l.Out, &l.Up, &l.Down} {
+			quantizeLinear(lin)
+			lin.W = nil
+			lin.ActF32 = opts.Quant == QuantInt8RowWeights
+			if opts.Quant == QuantInt8Row && k.tile != nil && lin.In%8 == 0 && lin.Out%k.tile.cols == 0 {
+				lin.Packed = make([]byte, lin.Out*lin.In)
+				lin.Corr = make([]int32, lin.Out)
+				k.tile.packB(lin.W8, lin.Out, lin.In, k.tile.actOffset, lin.Packed, lin.Corr)
 			}
 		}
 	}
-	return m, nil
+	return nil
 }
 
 func readConfig(f *ggufFile, c *Config) error {

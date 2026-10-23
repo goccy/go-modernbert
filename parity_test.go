@@ -48,7 +48,7 @@ func TestParity(t *testing.T) {
 		quant = QuantInt8Row
 	}
 	threads, _ := strconv.Atoi(os.Getenv("MODERNBERT_THREADS"))
-	m, err := LoadWithOptions(path, Options{Quant: quant, Threads: threads})
+	m, err := LoadWithOptions(path, Options{Quant: quant, Threads: threads, Kernel: testKernel(t)})
 	if err != nil {
 		t.Fatal(err)
 	}

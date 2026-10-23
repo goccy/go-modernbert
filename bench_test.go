@@ -22,7 +22,7 @@ func BenchmarkEncode(b *testing.B) {
 	case "int8":
 		quant = QuantInt8Row
 	}
-	m, err := LoadWithOptions(path, Options{Threads: threads, Quant: quant})
+	m, err := LoadWithOptions(path, Options{Threads: threads, Quant: quant, Kernel: testKernel(b)})
 	if err != nil {
 		b.Fatal(err)
 	}

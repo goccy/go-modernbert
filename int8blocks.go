@@ -37,7 +37,9 @@ func packInt8Blocks8(q []int8, rows, k int, out []byte) {
 // path: activations quantized per row into ws.vy (rows padded to a
 // multiple of eight), then each activation block against the weight
 // blocks of l.Packed, the weight blocks split across the pool.
-func matmulTile(x []float32, T int, l Linear, ws *workspace, out []float32) {
+func (m *Model) matmulTile(x []float32, T int, l Linear, ws *workspace, out []float32) {
+	kt := m.k.tile
+	tileCols := kt.cols
 	K, N := l.In, l.Out
 	Tp := roundUp(T, int8BlockRows)
 	xs := ws.xs[:Tp]
@@ -50,7 +52,7 @@ func matmulTile(x []float32, T int, l Linear, ws *workspace, out []float32) {
 	}
 	parallelFor(ws.pool, Tp/int8BlockRows, 1, func(glo, ghi int) {
 		for g := glo; g < ghi; g++ {
-			quantizeTileA(&src[g*int8BlockRows*K], K, K, &a[g*int8BlockRows*K], &xs[g*int8BlockRows])
+			kt.quantA(&src[g*int8BlockRows*K], K, K, &a[g*int8BlockRows*K], &xs[g*int8BlockRows])
 		}
 	})
 	dst := out
@@ -59,7 +61,7 @@ func matmulTile(x []float32, T int, l Linear, ws *workspace, out []float32) {
 	}
 	parallelFor(ws.pool, N/tileCols, 1, func(blo, bhi int) {
 		for g := 0; g < Tp/int8BlockRows; g++ {
-			tileGemm(&a[g*int8BlockRows*K], &l.Packed[blo*tileCols*K], K, bhi-blo, tileCols*K,
+			kt.gemm(&a[g*int8BlockRows*K], &l.Packed[blo*tileCols*K], K, bhi-blo, tileCols*K,
 				&xs[g*int8BlockRows], &l.Scale[blo*tileCols], &l.Corr[blo*tileCols], &dst[g*int8BlockRows*N+blo*tileCols], N)
 		}
 	})

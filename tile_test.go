@@ -12,14 +12,15 @@ import (
 // (weights packed once) and the attention shapes (blocks spaced out by a
 // larger stride, unsigned probabilities).
 func TestTileGemm(t *testing.T) {
-	if !hasInt8Tiles {
+	kt := testKernels(t).tile
+	if kt == nil {
 		t.Skip("no int8 tile")
 	}
-	t.Logf("tileCols=%d actOffset=%d actLevels=%v probLevels=%v", tileCols, actOffset, actLevels, probLevels)
+	t.Logf("cols=%d kt.actOffset=%d actLevels=%v kt.probLevels=%v", kt.cols, kt.actOffset, kt.actLevels, kt.probLevels)
 	for _, tc := range []struct{ k, ncb int }{{8, 1}, {64, 3}, {512, 5}, {2048, 2}} {
 		t.Run(fmt.Sprintf("k=%d/ncb=%d", tc.k, tc.ncb), func(t *testing.T) {
 			rng := rand.New(rand.NewSource(1))
-			rows, cols := tileRows, tileCols*tc.ncb
+			rows, cols := tileRows, kt.cols*tc.ncb
 			x := make([]float32, rows*tc.k)
 			w := make([]float32, cols*tc.k)
 			for i := range x {
@@ -33,36 +34,36 @@ func TestTileGemm(t *testing.T) {
 			quantizeLinear(&l)
 			packed := make([]byte, cols*tc.k)
 			corr := make([]int32, cols)
-			packTileB(l.W8, cols, tc.k, actOffset, packed, corr)
+			kt.packB(l.W8, cols, tc.k, kt.actOffset, packed, corr)
 			a := make([]byte, rows*tc.k)
 			xs := make([]float32, rows)
-			quantizeTileA(&x[0], tc.k, tc.k, &a[0], &xs[0])
+			kt.quantA(&x[0], tc.k, tc.k, &a[0], &xs[0])
 			stride := cols + 3
 			out := make([]float32, rows*stride)
-			tileGemm(&a[0], &packed[0], tc.k, tc.ncb, tileCols*tc.k, &xs[0], &l.Scale[0], &corr[0], &out[0], stride)
+			kt.gemm(&a[0], &packed[0], tc.k, tc.ncb, kt.cols*tc.k, &xs[0], &l.Scale[0], &corr[0], &out[0], stride)
 			assertClose(t, "gemm", x, w, rows, cols, tc.k, out, stride, 3e-2)
 
 			// Attention shapes: B from quantizeTileB with blocks spaced out,
 			// A as probabilities in [0, 1].
-			gap := 2 * tileCols * tc.k
+			gap := 2 * kt.cols * tc.k
 			spaced := make([]byte, tc.ncb*gap)
 			corr2 := make([]int32, cols)
 			ws2 := make([]float32, cols)
 			tmp := make([]int8, cols*tc.k)
 			for cb := 0; cb < tc.ncb; cb++ {
-				quantizeTileB(w[cb*tileCols*tc.k:], tileCols, tc.k, tc.k, 0, valueLevels, spaced[cb*gap:], corr2[cb*tileCols:], ws2[cb*tileCols:], tmp)
+				kt.quantB(w[cb*kt.cols*tc.k:], kt.cols, tc.k, tc.k, 0, kt.valueLevels, spaced[cb*gap:], corr2[cb*kt.cols:], ws2[cb*kt.cols:], tmp)
 			}
 			p := make([]float32, rows*tc.k)
 			for i := range p {
 				p[i] = rng.Float32()
 			}
 			probs := make([]byte, rows*tc.k)
-			quantizeTileProbs(&p[0], tc.k, tc.k, &probs[0])
+			kt.quantProbs(&p[0], tc.k, tc.k, &probs[0])
 			ps := make([]float32, rows)
 			for r := range ps {
-				ps[r] = 1 / probLevels
+				ps[r] = 1 / kt.probLevels
 			}
-			tileGemmProbs(&probs[0], &spaced[0], tc.k, tc.ncb, gap, &ps[0], &ws2[0], &corr2[0], &out[0], stride)
+			kt.gemmProbs(&probs[0], &spaced[0], tc.k, tc.ncb, gap, &ps[0], &ws2[0], &corr2[0], &out[0], stride)
 			assertClose(t, "probs", p, w, rows, cols, tc.k, out, stride, 3e-2)
 		})
 	}

@@ -15,7 +15,4 @@ type tile struct {
 	run        func(x, w *int8, k, xStride, wStride int, out *int32)
 }
 
-// kernel is the tile this process runs, chosen once from the CPU features.
-var kernel = tileKernel()
-
 func unsafePointer(p *int8) unsafe.Pointer { return unsafe.Pointer(p) }

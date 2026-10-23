@@ -8,6 +8,7 @@ package modernbert
 import (
 	"fmt"
 	"math"
+	"runtime"
 	"sync"
 )
 
@@ -75,7 +76,8 @@ const (
 type Options struct {
 	Quant Quant
 	// Threads is how many goroutines a forward pass spreads its matrix
-	// products and attention over; 0 or 1 runs single-threaded.
+	// products and attention over; 0 or 1 runs single-threaded, and more
+	// than GOMAXPROCS is cut to GOMAXPROCS.
 	Threads int
 	// Kernel selects the SIMD kernels; KernelAuto picks the best the CPU
 	// advertises. A kernel named explicitly runs whether or not the CPU
@@ -191,7 +193,9 @@ func (m *Model) prepare(opts Options) error {
 		return err
 	}
 	m.k = k
-	m.threads = max(opts.Threads, 1)
+	// More threads than the runtime can run at once only contend: the
+	// workers spin between regions.
+	m.threads = max(1, min(opts.Threads, runtime.GOMAXPROCS(0)))
 	if opts.Quant == QuantDefault {
 		opts.Quant = QuantInt8Row
 	}

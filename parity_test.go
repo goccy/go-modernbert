@@ -20,8 +20,6 @@ func TestParity(t *testing.T) {
 	if path == "" {
 		t.Skip("set MODERNBERT_GGUF to run")
 	}
-	relTol := envFloat(t, "MODERNBERT_REL_TOL", 1e-2)
-	cosMin := envFloat(t, "MODERNBERT_COS_MIN", 0.999)
 	var ref struct {
 		Model string `json:"model"`
 		NEmbd int    `json:"n_embd"`
@@ -46,6 +44,13 @@ func TestParity(t *testing.T) {
 		quant = QuantInt8RowWeights
 	case "int8":
 		quant = QuantInt8Row
+	}
+	// The float32 path reproduces PyTorch; the int8 paths carry
+	// quantization error (cosine around 0.98 on the worst prompt).
+	relTol := envFloat(t, "MODERNBERT_REL_TOL", 1e-2)
+	cosMin := envFloat(t, "MODERNBERT_COS_MIN", 0.97)
+	if quant == QuantF32 {
+		cosMin = envFloat(t, "MODERNBERT_COS_MIN", 0.999)
 	}
 	threads, _ := strconv.Atoi(os.Getenv("MODERNBERT_THREADS"))
 	m, err := LoadWithOptions(path, Options{Quant: quant, Threads: threads, Kernel: testKernel(t)})

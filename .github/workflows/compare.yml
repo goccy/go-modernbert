@@ -1,9 +1,14 @@
 name: compare
 
 # go-modernbert against go-llama on one synthetic 130m-shaped GGUF, on
-# the runner's CPU. Manual, since it builds the go-llama engine.
+# the runner's CPU. Manual, or when the benchmark itself changes, since
+# it builds the go-llama engine.
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - benchmarks/**
+      - .github/workflows/compare.yml
 
 permissions:
   contents: read
@@ -35,8 +40,12 @@ jobs:
         working-directory: benchmarks
         run: go build -o "$RUNNER_TEMP/bench" .
       - name: Synthetic model
-        run: "$RUNNER_TEMP/bench" -gen "$RUNNER_TEMP/synth.gguf"
+        run: |
+          "$RUNNER_TEMP/bench" -gen "$RUNNER_TEMP/synth.gguf"
       - name: 1 thread
-        run: "$RUNNER_TEMP/bench" -gguf "$RUNNER_TEMP/synth.gguf" -threads 1 -reps 3 2>&1 | grep -E '^(go-|[a-z]+/)'
+        run: |
+          "$RUNNER_TEMP/bench" -gguf "$RUNNER_TEMP/synth.gguf" -threads 1 -reps 3 2>&1 | grep -E '^(go-|[a-z]+/)'
       - name: All cores
-        run: "$RUNNER_TEMP/bench" -gguf "$RUNNER_TEMP/synth.gguf" -threads "$(nproc 2>/dev/null || sysctl -n hw.ncpu)" -reps 3 2>&1 | grep -E '^(go-|[a-z]+/)'
+        run: |
+          cores=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+          "$RUNNER_TEMP/bench" -gguf "$RUNNER_TEMP/synth.gguf" -threads "$cores" -reps 3 2>&1 | grep -E '^(go-|[a-z]+/)'

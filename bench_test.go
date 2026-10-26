@@ -21,6 +21,8 @@ func BenchmarkEncode(b *testing.B) {
 		quant = QuantF32
 	case "int8":
 		quant = QuantInt8Row
+	case "w8":
+		quant = QuantInt8RowWeights
 	}
 	m, err := LoadWithOptions(path, Options{Threads: threads, Quant: quant, Kernel: testKernel(b)})
 	if err != nil {

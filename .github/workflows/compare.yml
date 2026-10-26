@@ -13,12 +13,20 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   compare:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     env:
@@ -31,11 +39,8 @@ jobs:
           cache-dependency-path: benchmarks/go.sum
       - name: CPU
         run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            grep -m1 'model name' /proc/cpuinfo; nproc
-          else
-            sysctl -n machdep.cpu.brand_string hw.ncpu
-          fi
+          grep -m1 'model name' /proc/cpuinfo || grep -m1 'CPU part' /proc/cpuinfo || true
+          nproc
       - name: Build
         working-directory: benchmarks
         run: go build -o "$RUNNER_TEMP/bench" .
@@ -47,5 +52,4 @@ jobs:
           "$RUNNER_TEMP/bench" -gguf "$RUNNER_TEMP/synth.gguf" -threads 1 -reps 3 2>&1 | grep -E '^(go-|[a-z]+/)'
       - name: All cores
         run: |
-          cores=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
-          "$RUNNER_TEMP/bench" -gguf "$RUNNER_TEMP/synth.gguf" -threads "$cores" -reps 3 2>&1 | grep -E '^(go-|[a-z]+/)'
+          "$RUNNER_TEMP/bench" -gguf "$RUNNER_TEMP/synth.gguf" -threads "$(nproc)" -reps 3 2>&1 | grep -E '^(go-|[a-z]+/)'

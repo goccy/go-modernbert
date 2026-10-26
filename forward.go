@@ -115,13 +115,34 @@ func (m *Model) releaseWorkspace(ws *workspace) {
 	}
 }
 
+// Close releases the workspaces and worker goroutines kept for reuse.
+// The model stays usable; a later Encode allocates afresh. Without Close
+// they are released when the model is garbage collected.
+func (m *Model) Close() {
+	m.wsOnce.Do(func() { m.wsFree = make(chan *workspace, 16) })
+	for {
+		select {
+		case ws := <-m.wsFree:
+			runtime.SetFinalizer(ws, nil)
+			ws.pool.close()
+		default:
+			return
+		}
+	}
+}
+
 // Encode runs the encoder over tokens (ids including BOS/EOS as the tokenizer
 // emits them) and returns the final hidden state of every position,
-// [len(tokens)*NEmbd]. CLS pooling is the first NEmbd values.
+// [len(tokens)*NEmbd]. CLS pooling is the first NEmbd values. Sequences
+// longer than the model's context length are rejected. Encode is safe
+// for concurrent use.
 func (m *Model) Encode(tokens []int32) ([]float32, error) {
 	T := len(tokens)
 	if T == 0 {
 		return nil, fmt.Errorf("modernbert: empty input")
+	}
+	if m.NCtxTrain > 0 && T > m.NCtxTrain {
+		return nil, fmt.Errorf("modernbert: %d tokens exceed the context length %d", T, m.NCtxTrain)
 	}
 	D := m.NEmbd
 	for i, t := range tokens {
@@ -256,7 +277,7 @@ func (m *Model) attention(q, k, v []float32, T, il int, out []float32, ws *works
 	if !m.IsGlobal(il) && m.Window > 0 {
 		halfWin = m.Window / 2
 	}
-	tiles := hasF32Tiles && hd%16 == 0
+	tiles := hasF32Tiles && hd%16 == 0 && m.k.kernel != KernelNone
 	nBlocks := (T + 3) / 4
 	parallelFor(ws.pool, m.NHead*nBlocks, 1, func(lo, hi int) {
 		scores := make([]float32, 4*T)

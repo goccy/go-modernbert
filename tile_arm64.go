@@ -18,6 +18,7 @@ import (
 func selectKernels(k Kernel) (*kernels, error) {
 	switch k {
 	case KernelAuto:
+		k = KernelNone
 		if cpu.ARM64.HasI8MM {
 			k = KernelSMMLA
 		}

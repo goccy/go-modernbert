@@ -11,13 +11,19 @@ import (
 // 1/(probLevels·sum) folded into the row scale.
 
 // attentionInt8 is attention on the int8 tile: q, k, v are [Tp*NEmbd]
-// with zero rows past T (Tp = T rounded up to tileAlign), out is
-// [T*NEmbd].
+// (Tp = T rounded up to the tile's alignment; the rows past T are
+// cleared here), out is [T*NEmbd].
 func (m *Model) attentionInt8(q, k, v []float32, T, il int, out []float32, ws *workspace) {
 	hd, D := m.HeadDim(), m.NEmbd
 	kt := m.k.tile
 	tileCols := kt.cols
 	Tp := roundUp(T, kt.align)
+	// The padding rows hold whatever an earlier call left in the
+	// workspace; the value scales are taken over all Tp rows, so they
+	// must be zero.
+	clear(q[T*D : Tp*D])
+	clear(k[T*D : Tp*D])
+	clear(v[T*D : Tp*D])
 	nb := Tp / tileRows  // query blocks
 	nkb := Tp / tileCols // key blocks
 	db := hd / tileCols  // value dimension blocks
